@@ -1,6 +1,12 @@
 import os
-from fastapi import FastAPI
+from typing import List, Optional
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from datetime import datetime
+
+from database import create_document, get_documents
+from schemas import Credential, CredentialOut
 
 app = FastAPI()
 
@@ -63,6 +69,50 @@ def test_database():
     response["database_name"] = "✅ Set" if os.getenv("DATABASE_NAME") else "❌ Not Set"
     
     return response
+
+# ----------------------
+# Credentials Endpoints
+# ----------------------
+
+class CreateResponse(BaseModel):
+    id: str
+
+@app.post("/api/credentials", response_model=CreateResponse)
+def create_credential(credential: Credential):
+    try:
+        inserted_id = create_document("credential", credential)
+        return {"id": inserted_id}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/credentials", response_model=List[CredentialOut])
+def list_credentials(q: Optional[str] = Query(None, description="Search text for title or username")):
+    try:
+        filter_query = {}
+        if q:
+            # Case-insensitive search on title or username
+            filter_query = {
+                "$or": [
+                    {"title": {"$regex": q, "$options": "i"}},
+                    {"username": {"$regex": q, "$options": "i"}},
+                ]
+            }
+        docs = get_documents("credential", filter_query)
+
+        def to_out(doc) -> CredentialOut:
+            return CredentialOut(
+                id=str(doc.get("_id")),
+                title=doc.get("title", ""),
+                username=doc.get("username", ""),
+                password=doc.get("password", ""),
+                url=doc.get("url"),
+                note=doc.get("note"),
+                created_at=(doc.get("created_at").isoformat() if doc.get("created_at") else None),
+                updated_at=(doc.get("updated_at").isoformat() if doc.get("updated_at") else None),
+            )
+        return [to_out(d) for d in docs]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
